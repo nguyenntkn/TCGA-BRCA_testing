@@ -4,7 +4,8 @@ library('data.table')
 library('SummarizedExperiment')
 library('DESeq2')
 library('tidyverse')
-
+library('edgeR')
+library('ggalt')
 # Following this vignette: 
 # https://cran.r-project.org/web/packages/easybio/vignettes/example_limma.html
 
@@ -112,7 +113,7 @@ pca_data$x %>%
   geom_point()
 
 
-# ================= DEA =================
+# ================= Extract paired samples =================
 
 # First do paired analysis
 # Extract paired data
@@ -134,6 +135,42 @@ pca_paired$x %>%
   ggplot(aes(x=PC1, y=PC2, colour = paired_metadata$sample_type)) + 
   geom_point()
 
+# ======================== Preprocessing =======================
 
+# First the count data must be stored as a DGElist object which would contain 
+# raw counts, sample information (groups, patient IDs,...), and library sizes
+# & normalization factors
+# These are all required for normalization with limma + voom
+dge <- DGEList(paired_exprs_data)
 
+# We then need to calculate the normalization factor
+# NOTE: This doesn't normalize the data, just providing info for voom to normalize
+dge <- calcNormFactors(dge)
 
+# We can then filter out the lowly expressed genes since they're not very useful
+# for differential expression, and to reduce the computational power.
+# Many people suggest filtering out by CPM (count per million) rather than raw counts
+# to account for differences in sequencing depth between samples.
+# A general rule is to choose a CPM threshold that corresponds to a raw count of 10.
+# However, it might be hard to workout which CPM value corresponds to the raw count of 10.
+# So a CPM of 1 works well for most cases.
+# (ie. count of 10 vs library size of 10M -> CPM 1)
+cpm_threshold <- 1
+genes_to_drop <- which(apply(cpm(dge), 1, max) < cpm_threshold)
+dge <- dge[-genes_to_drop,]
+dim(dge[["counts"]])
+
+# MDS plot??
+# But need to make sure the column names in count table has the same order as
+# the samples in meta data table.
+colnames(paired_exprs_data) == paired_metadata$cases
+plotMDS(dge, col = as.numeric(as.factor(paired_metadata$sample_type)))
+
+# Or use ggplot
+mds <- plotMDS(dge, plot = FALSE)
+mds_df <- data.frame(Dim1=mds$x, Dim2=mds$y, Group=as.factor(paired_metadata$sample_type))
+mds_df %>% ggplot(aes(x=Dim1, y=Dim2, col=Group, fill=Group)) +
+  geom_point() +
+  # geom_mark_hull(alpha = 0.25, expand = 0) +
+  geom_encircle(aes(col = Group, s_shape = 1, ))
+  theme_classic()
