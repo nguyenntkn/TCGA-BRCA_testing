@@ -5,7 +5,7 @@ library('SummarizedExperiment')
 library('DESeq2')
 library('tidyverse')
 library('edgeR')
-library('ggalt')
+
 # Following this vignette: 
 # https://cran.r-project.org/web/packages/easybio/vignettes/example_limma.html
 
@@ -164,13 +164,6 @@ dim(dge[["counts"]])
 # But need to make sure the column names in count table has the same order as
 # the samples in meta data table.
 colnames(paired_exprs_data) == paired_metadata$cases
-plotMDS(dge, col = as.numeric(as.factor(paired_metadata$sample_type)))
+plotMDS(dge, col = as.numeric(as.factor(paired_metadata$sample_type)), pch = 16)
 
-# Or use ggplot
-mds <- plotMDS(dge, plot = FALSE)
-mds_df <- data.frame(Dim1=mds$x, Dim2=mds$y, Group=as.factor(paired_metadata$sample_type))
-mds_df %>% ggplot(aes(x=Dim1, y=Dim2, col=Group, fill=Group)) +
-  geom_point() +
-  # geom_mark_hull(alpha = 0.25, expand = 0) +
-  geom_encircle(aes(col = Group, s_shape = 1, ))
-  theme_classic()
+
