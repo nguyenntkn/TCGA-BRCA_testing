@@ -15,13 +15,15 @@ query <- GDCquery(
   data.category = "Transcriptome Profiling",
   data.type = "Gene Expression Quantification"
 )
-# ============= exploring metadata =============
+# ============= 1. exploring metadata =============
 metadata <- query[[1]][[1]]
 # Just checking what sample types there are
+
+
 unique(metadata$sample_type)
 # There's only Primary Tumor and Solid Tissue Normal
 
-# Experimental stratery (RNA-seq, microarray?...)
+# Experimental strategy (RNA-seq, microarray?...)
 unique(metadata$experimental_strategy)
 # All RNA-Seq. Wonder if people still use microarray here...
 
@@ -68,7 +70,7 @@ paired_patient <- sample_count %>%
 
 paired_patient <- paired_patient[[1]]
 
-# ============= Download data and some more exploration ==================
+# ============= 2. Download data and some more exploration ==================
 # Download associated data. 
 GDCdownload(query = query)
 
@@ -82,9 +84,11 @@ dim(exprs_data)
 # 60660 genes and 44 samples
 
 
-# ================= PCA =================
+# ================= 2.1. PCA =================
 
-# First prep data for PCA
+# So we were originally taught to use PCA, but seems like it isn't the best for 
+# RNA-seq data as its assumptions don't match
+
 
 # Some notes before doing PCA: 
 #   1. PCA needs expression data table to be transposed (row = samples, col = feature)
@@ -113,12 +117,17 @@ pca_data$x %>%
   geom_point()
 
 
-# ================= Extract paired samples =================
+# ================= 2.2. Extract paired samples =================
 
 # First do paired analysis
 # Extract paired data
 paired_metadata <- metadata %>% 
-  filter(cases.submitter_id %in% paired_patient)
+  filter(cases.submitter_id %in% paired_patient) 
+
+# NOTE: I'm just editing directly into the metadata table rn. 
+# I want to remove all space in the sample_type column
+paired_metadata$sample_type <- gsub(" ", "", paired_metadata$sample_type)
+
 
 # Subseting expression data to contain only paired samples
 paired_exprs_data <- exprs_data[, paired_metadata$cases]
@@ -135,17 +144,17 @@ pca_paired$x %>%
   ggplot(aes(x=PC1, y=PC2, colour = paired_metadata$sample_type)) + 
   geom_point()
 
-# ======================== Preprocessing =======================
+# ======================== 2.3. Preprocessing =======================
 
 # First the count data must be stored as a DGElist object which would contain 
 # raw counts, sample information (groups, patient IDs,...), and library sizes
 # & normalization factors
 # These are all required for normalization with limma + voom
-dge <- DGEList(paired_exprs_data)
+dge_0 <- DGEList(paired_exprs_data)
 
 # We then need to calculate the normalization factor
 # NOTE: This doesn't normalize the data, just providing info for voom to normalize
-dge <- calcNormFactors(dge)
+dge_0 <- calcNormFactors(dge_0)
 
 # We can then filter out the lowly expressed genes since they're not very useful
 # for differential expression, and to reduce the computational power.
@@ -156,8 +165,10 @@ dge <- calcNormFactors(dge)
 # So a CPM of 1 works well for most cases.
 # (ie. count of 10 vs library size of 10M -> CPM 1)
 cpm_threshold <- 1
-genes_to_drop <- which(apply(cpm(dge), 1, max) < cpm_threshold)
-dge <- dge[-genes_to_drop,]
+genes_to_drop <- which(apply(cpm(dge_0), 1, max) < cpm_threshold)
+            # apply(): in the matrix cpm(dge), going row by row (1=row, 2=col)
+            # and get the max CPM of that row.
+dge <- dge_0[-genes_to_drop,]
 dim(dge[["counts"]])
 
 # MDS plot??
@@ -167,3 +178,29 @@ colnames(paired_exprs_data) == paired_metadata$cases
 plotMDS(dge, col = as.numeric(as.factor(paired_metadata$sample_type)), pch = 16)
 
 
+group <- paired_metadata$sample_type
+# Voom transformation. 
+# But before that, we should specify the model to be fitted
+mm <- model.matrix(~ 0 + group)
+
+y <- voom(dge, mm, plot=T)
+# compare to the pre-filter:
+y_0 <- voom(dge_0, mm, plot=T)
+
+# ============== Fitting linear model with limma =============
+fit <- lmFit(y, mm)
+# coef_table <- coef(fit)
+# colnames(coef_table) <- c("PrimaryTumor", "SolidTissueNormal")
+
+head(coef(fit))
+
+
+contr <- makeContrasts(groupPrimaryTumor - groupSolidTissueNormal,
+                       levels = colnames(coef(fit)))
+
+
+tmp <- contrasts.fit(fit, contr)
+
+tmp <- eBayes(tmp)
+top.table <- topTable(tmp, sort.by = "P", n = Inf)
+head(top.table, 20)
